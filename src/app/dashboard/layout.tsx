@@ -46,6 +46,12 @@ export default async function DashboardLayout({
             Pesanan
           </Link>
           <Link
+            href="/dashboard/catalog"
+            className="border-b-2 border-transparent px-3 py-3 text-sm font-medium text-zinc-600 hover:text-zinc-900"
+          >
+            Katalog
+          </Link>
+          <Link
             href="/dashboard/settings"
             className="border-b-2 border-transparent px-3 py-3 text-sm font-medium text-zinc-600 hover:text-zinc-900"
           >

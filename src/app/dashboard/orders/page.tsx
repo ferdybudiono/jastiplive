@@ -6,11 +6,13 @@ import OrderCard from "@/components/order-card";
 export const dynamic = "force-dynamic";
 
 const STATUS_STYLES: Record<string, string> = {
+  pending_approval: "bg-indigo-50 text-indigo-700",
   held_in_escrow: "bg-blue-50 text-blue-700",
   purchased: "bg-amber-50 text-amber-700",
   completed: "bg-green-50 text-green-700",
   cancelled: "bg-zinc-100 text-zinc-500",
   refunded: "bg-zinc-100 text-zinc-500",
+  rejected: "bg-red-50 text-red-700",
   pending_payment: "bg-zinc-100 text-zinc-500",
 };
 

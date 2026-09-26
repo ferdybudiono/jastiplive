@@ -29,6 +29,34 @@ export const markPurchasedSchema = z.object({
 });
 export type MarkPurchasedInput = z.infer<typeof markPurchasedSchema>;
 
+// Shared by the approve and reject routes — a seller action on one order.
+export const orderActionSchema = z.object({
+  order_id: z.string().uuid(),
+});
+export type OrderActionInput = z.infer<typeof orderActionSchema>;
+
+// Buyer requests a Snap token for an approved order via its pay_token.
+export const payCreateSchema = z.object({
+  pay_token: z.string().min(16).max(128),
+});
+export type PayCreateInput = z.infer<typeof payCreateSchema>;
+
+// Seller catalog item (managed from the dashboard). Price is an optional
+// suggested amount; it is not a payment amount, so it is not clamped to the
+// order MIN, only sanity-bounded.
+export const catalogItemSchema = z.object({
+  name: z.string().trim().min(1, "Nama barang wajib diisi").max(200),
+  description: z.string().trim().max(1000).optional().or(z.literal("")),
+  image_url: z.string().url().max(1000).optional().or(z.literal("")),
+  price: z
+    .number()
+    .int("Harga harus berupa angka bulat (rupiah)")
+    .min(0)
+    .max(MAX_ORDER_AMOUNT)
+    .optional(),
+});
+export type CatalogItemInput = z.infer<typeof catalogItemSchema>;
+
 export const confirmDeliverySchema = z.object({
   token: z.string().min(16).max(128),
 });

@@ -87,6 +87,31 @@ export default function OrderCard({
     }
   }
 
+  async function decide(action: "approve" | "reject") {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/orders/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order_id: order.id }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(
+          body.error ??
+            (action === "approve" ? "Gagal menyetujui" : "Gagal menolak"),
+        );
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Terjadi kesalahan jaringan");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-5">
       <div className="flex items-start justify-between gap-3">
@@ -129,6 +154,43 @@ export default function OrderCard({
       </div>
 
       {/* Actions per status */}
+      {order.status === "pending_approval" ? (
+        <div className="mt-4 border-t border-zinc-100 pt-4">
+          <p className="mb-2 text-sm font-medium text-zinc-700">
+            Permintaan baru — setujui untuk mengirim link pembayaran ke buyer.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => decide("approve")}
+              disabled={busy}
+            >
+              {busy ? "Memproses…" : "Setujui"}
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => decide("reject")}
+              disabled={busy}
+            >
+              Tolak
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {order.status === "pending_payment" ? (
+        <p className="mt-3 border-t border-zinc-100 pt-3 text-sm text-zinc-600">
+          Disetujui — menunggu pembayaran dari buyer.
+        </p>
+      ) : null}
+
+      {order.status === "rejected" ? (
+        <p className="mt-3 border-t border-zinc-100 pt-3 text-sm text-red-600">
+          Permintaan ini ditolak.
+        </p>
+      ) : null}
+
       {order.status === "held_in_escrow" ? (
         <div className="mt-4 border-t border-zinc-100 pt-4">
           <p className="mb-2 text-sm font-medium text-zinc-700">

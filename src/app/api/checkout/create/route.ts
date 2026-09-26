@@ -3,15 +3,15 @@ import { nanoid } from "nanoid";
 import { checkoutCreateSchema, normalizePhone } from "@/lib/validation";
 import { createServiceClient } from "@/lib/supabase/service";
 import { computeFees } from "@/lib/fees";
-import { createSnapTransaction } from "@/lib/midtrans";
 import { sendWhatsApp } from "@/lib/fonnte";
 import { clientIp, rateLimit } from "@/lib/ratelimit";
 import type { CheckoutCreateResponse } from "@/lib/types";
 
 const rupiah = (n: number) => "Rp " + n.toLocaleString("id-ID");
 
-// Public, unauthenticated. Creates a pending order, a Midtrans Snap
-// transaction, and sends the buyer a WhatsApp payment link.
+// Public, unauthenticated. Creates a buyer REQUEST awaiting seller approval
+// (status = pending_approval). No payment happens here — the Snap transaction
+// is created later, after the seller approves, via /api/checkout/pay.
 export async function POST(request: Request) {
   let raw: unknown;
   try {
@@ -60,6 +60,7 @@ export async function POST(request: Request) {
   const fees = computeFees(input.amount_budget, Number(profile.platform_fee_percent));
   const orderId = `jl-${input.slug}-${nanoid(10)}`;
   const confirmToken = nanoid(32);
+  const payToken = nanoid(32);
   const phone = normalizePhone(input.viewer_phone);
 
   const { data: order, error: insertErr } = await supabase
@@ -74,8 +75,9 @@ export async function POST(request: Request) {
       amount_budget: fees.amountBudget,
       platform_fee: fees.platformFee,
       streamer_payout_amount: fees.payout,
-      status: "pending_payment",
+      status: "pending_approval",
       confirm_token: confirmToken,
+      pay_token: payToken,
       midtrans_order_id: orderId,
     })
     .select("id")
@@ -85,38 +87,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Gagal membuat pesanan" }, { status: 500 });
   }
 
-  let snap;
-  try {
-    snap = await createSnapTransaction({
-      orderId,
-      grossAmount: fees.amountBudget,
-      customerName: input.viewer_name,
-      customerPhone: phone,
-      itemName: input.item_name,
-      finishUrl: `${process.env.NEXT_PUBLIC_APP_URL}/${input.slug}`,
-    });
-  } catch {
-    return NextResponse.json(
-      { error: "Gagal membuat transaksi pembayaran" },
-      { status: 502 },
-    );
-  }
-
-  await supabase
-    .from("jastip_orders")
-    .update({ midtrans_snap_token: snap.token })
-    .eq("id", order.id);
-
-  // WhatsApp payment link (best effort — never fails the request).
+  // Tell the buyer the request was sent and is awaiting approval (best effort).
   void sendWhatsApp(
     phone,
-    `Halo ${input.viewer_name}! Pesanan jastip "${input.item_name}" senilai ${rupiah(
+    `Halo ${input.viewer_name}! Permintaan jastip "${input.item_name}" senilai ${rupiah(
       fees.amountBudget,
-    )} sudah dibuat.\n\nSelesaikan pembayaran di sini:\n${snap.redirect_url}`,
+    )} sudah dikirim ke seller.\n\nTunggu persetujuan seller ya — kami akan kirim link pembayaran begitu disetujui.`,
   );
 
   return NextResponse.json({
-    midtrans_order_id: orderId,
-    snap_token: snap.token,
+    order_id: order.id,
+    pay_token: payToken,
   } satisfies CheckoutCreateResponse);
 }

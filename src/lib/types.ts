@@ -3,11 +3,13 @@
 // and Midtrans/Iris expect whole-rupiah amounts, so we never use floats for money.
 
 export type OrderStatus =
-  | "pending_payment"
+  | "pending_approval" // buyer request awaiting seller approve/reject
+  | "pending_payment" // seller approved; awaiting buyer payment
   | "held_in_escrow"
   | "purchased"
   | "completed"
   | "cancelled"
+  | "rejected" // seller declined the request
   | "refunded";
 
 export type PayoutStatus = "processing" | "completed" | "failed";
@@ -49,6 +51,7 @@ export interface JastipOrder {
   payout_status: PayoutStatus | null;
   iris_reference_no: string | null;
   confirm_token: string | null;
+  pay_token: string | null; // buyer's handle for the realtime channel + /pay page
   purchased_at: string | null;
   midtrans_order_id: string;
   midtrans_snap_token: string | null;
@@ -56,10 +59,39 @@ export interface JastipOrder {
   updated_at: string;
 }
 
+/** Row shape of the `catalog_items` table. */
+export interface CatalogItem {
+  id: string; // uuid
+  streamer_id: string; // references profiles.id
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  price: number | null; // integer rupiah, suggested price (optional)
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Public-safe catalog item (returned by get_catalog_by_slug to anon buyers). */
+export interface PublicCatalogItem {
+  id: string;
+  name: string;
+  description: string | null;
+  image_url: string | null;
+  price: number | null;
+}
+
 // ---- API payload types ----
 
+/** Response of POST /api/checkout/create — a request awaiting seller approval. */
 export interface CheckoutCreateResponse {
-  midtrans_order_id: string;
+  order_id: string;
+  pay_token: string;
+}
+
+/** Response of POST /api/checkout/pay — a Snap token for an approved order. */
+export interface CheckoutPayResponse {
   snap_token: string;
 }
 

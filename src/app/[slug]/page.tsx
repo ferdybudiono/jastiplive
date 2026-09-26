@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 import Script from "next/script";
 import { createServiceClient } from "@/lib/supabase/service";
-import type { PublicProfile } from "@/lib/types";
-import CheckoutForm from "@/components/checkout-form";
+import type { PublicCatalogItem, PublicProfile } from "@/lib/types";
+import ProfileOrderSection from "@/components/profile-order-section";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +12,13 @@ async function getStreamer(slug: string): Promise<PublicProfile | null> {
   const { data } = await supabase.rpc("get_streamer_by_slug", { p_slug: slug });
   const row = Array.isArray(data) ? data[0] : data;
   return (row as PublicProfile) ?? null;
+}
+
+async function getCatalog(slug: string): Promise<PublicCatalogItem[]> {
+  const supabase = createServiceClient();
+  // Safe RPC — returns active items with public columns only.
+  const { data } = await supabase.rpc("get_catalog_by_slug", { p_slug: slug });
+  return (data as PublicCatalogItem[]) ?? [];
 }
 
 const CLIENT_KEY = process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY ?? "";
@@ -24,6 +31,7 @@ export default async function BuyerPage(props: PageProps<"/[slug]">) {
   const { slug } = await props.params;
   const streamer = await getStreamer(slug);
   if (!streamer) notFound();
+  const catalog = await getCatalog(slug);
 
   return (
     <div className="flex flex-1 flex-col bg-zinc-50">
@@ -48,12 +56,12 @@ export default async function BuyerPage(props: PageProps<"/[slug]">) {
           Titip barang ke {streamer.display_name ?? slug}
         </h1>
         <p className="mt-1 text-sm text-zinc-600">
-          Isi detail titipanmu dan bayar via QRIS. Dana ditahan aman di escrow
-          sampai barang dibeli.
+          Isi detail titipanmu dan kirim permintaan. Kamu bayar via QRIS setelah
+          seller menyetujui — dana ditahan aman di escrow sampai barang dibeli.
         </p>
 
         <div className="mt-6">
-          <CheckoutForm slug={slug} />
+          <ProfileOrderSection slug={slug} catalog={catalog} />
         </div>
 
         <p className="mt-6 text-center text-xs text-zinc-400">

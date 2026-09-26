@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   ITEM_IMAGES_BUCKET,
@@ -9,37 +9,70 @@ import {
 } from "@/lib/constants";
 import { rupiah } from "@/lib/format";
 import { Button, Field, Input, Textarea } from "@/components/ui";
+import PayClient from "@/components/pay-client";
 
-// Midtrans Snap.js is injected via <Script> on the page.
-interface SnapCallbacks {
-  onSuccess?: (result: unknown) => void;
-  onPending?: (result: unknown) => void;
-  onError?: (result: unknown) => void;
-  onClose?: () => void;
-}
-declare global {
-  interface Window {
-    snap?: { pay: (token: string, callbacks?: SnapCallbacks) => void };
-  }
+/** Prefill from a clicked catalog item (buyer can still edit everything). */
+export interface CheckoutPrefill {
+  item_name?: string;
+  item_description?: string;
+  item_image_url?: string;
+  amount?: number;
 }
 
-type Phase = "form" | "submitting" | "paying" | "pending" | "done";
+type Phase =
+  | "form"
+  | "submitting"
+  | "waiting_approval" // request sent; awaiting seller approve/reject (realtime)
+  | "approved" // seller approved — show the pay button
+  | "rejected";
 
-export default function CheckoutForm({ slug }: { slug: string }) {
+export default function CheckoutForm({
+  slug,
+  prefill,
+}: {
+  slug: string;
+  prefill?: CheckoutPrefill;
+}) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [itemName, setItemName] = useState("");
-  const [itemDesc, setItemDesc] = useState("");
-  const [amount, setAmount] = useState("");
+  const [itemName, setItemName] = useState(prefill?.item_name ?? "");
+  const [itemDesc, setItemDesc] = useState(prefill?.item_description ?? "");
+  const [amount, setAmount] = useState(
+    prefill?.amount ? String(prefill.amount) : "",
+  );
   const [imageFile, setImageFile] = useState<File | null>(null);
+  // A prefilled catalog image is an already-uploaded URL; used unless the buyer
+  // picks their own file.
+  const prefillImageUrl = prefill?.item_image_url;
   const [uploading, setUploading] = useState(false);
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState<string | null>(null);
+  const [payToken, setPayToken] = useState<string | null>(null);
 
-  const busy = phase === "submitting" || phase === "paying" || uploading;
+  const busy = phase === "submitting" || uploading;
+
+  // Subscribe to the buyer's per-order channel once the request is sent. The
+  // server broadcasts `status_change` when the seller approves/rejects. The
+  // pay_token is unguessable and doubles as the channel's access control.
+  useEffect(() => {
+    if (!payToken || phase !== "waiting_approval") return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`order:${payToken}`)
+      .on("broadcast", { event: "status_change" }, ({ payload }) => {
+        const status = (payload as { status?: string })?.status;
+        if (status === "approved") setPhase("approved");
+        else if (status === "rejected") setPhase("rejected");
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [payToken, phase]);
 
   async function uploadImage(): Promise<string | undefined> {
-    if (!imageFile) return undefined;
+    if (!imageFile) return prefillImageUrl || undefined;
     setUploading(true);
     try {
       const supabase = createClient();
@@ -98,58 +131,66 @@ export default function CheckoutForm({ slug }: { slug: string }) {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(body.error ?? "Gagal membuat pesanan");
+        setError(body.error ?? "Gagal mengirim permintaan");
         setPhase("form");
         return;
       }
 
-      const token: string | undefined = body.snap_token;
-      if (!token || !window.snap) {
-        // Fallback: Snap not loaded — the WhatsApp link still lets them pay.
-        setPhase("pending");
+      const token: string | undefined = body.pay_token;
+      if (!token) {
+        setError("Terjadi kesalahan. Coba lagi.");
+        setPhase("form");
         return;
       }
-
-      setPhase("paying");
-      window.snap.pay(token, {
-        onSuccess: () => setPhase("done"),
-        onPending: () => setPhase("pending"),
-        onError: () => {
-          setError("Pembayaran gagal. Silakan coba lagi.");
-          setPhase("form");
-        },
-        onClose: () =>
-          setPhase((p) => (p === "done" ? "done" : "pending")),
-      });
+      setPayToken(token);
+      setPhase("waiting_approval");
     } catch {
       setError("Terjadi kesalahan jaringan");
       setPhase("form");
     }
   }
 
-  if (phase === "done") {
+  if (phase === "waiting_approval") {
     return (
-      <div className="rounded-2xl border border-green-200 bg-green-50 p-6 text-center">
-        <h2 className="text-lg font-semibold text-green-800">
-          Pembayaran diterima! 🎉
+      <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-6 text-center">
+        <h2 className="text-lg font-semibold text-indigo-800">
+          Permintaan terkirim! ⏳
         </h2>
-        <p className="mt-2 text-sm text-green-700">
-          Danamu ditahan aman di escrow. {`"${itemName}"`} akan dibeli oleh
-          streamer. Konfirmasi & update dikirim ke WhatsApp {phone}.
+        <p className="mt-2 text-sm text-indigo-700">
+          Menunggu persetujuan seller untuk {`"${itemName}"`}. Halaman ini akan
+          otomatis memperbarui saat disetujui — kami juga kirim link pembayaran
+          ke WhatsApp {phone}.
         </p>
       </div>
     );
   }
 
-  if (phase === "pending") {
+  if (phase === "approved" && payToken) {
     return (
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center">
-        <h2 className="text-lg font-semibold text-amber-800">
-          Selesaikan pembayaranmu
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-green-200 bg-green-50 p-6 text-center">
+          <h2 className="text-lg font-semibold text-green-800">
+            Disetujui seller! ✅
+          </h2>
+          <p className="mt-2 text-sm text-green-700">
+            Selesaikan pembayaran untuk {`"${itemName}"`}. Dana ditahan aman di
+            escrow sampai barang kamu terima.
+          </p>
+        </div>
+        <PayClient payToken={payToken} />
+      </div>
+    );
+  }
+
+  if (phase === "rejected") {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
+        <h2 className="text-lg font-semibold text-red-800">
+          Permintaan belum disetujui
         </h2>
-        <p className="mt-2 text-sm text-amber-700">
-          Kami sudah mengirim link pembayaran ke WhatsApp {phone}. Selesaikan
-          pembayaran di sana untuk mengaktifkan pesanan.
+        <p className="mt-2 text-sm text-red-700">
+          Maaf, seller belum bisa menyetujui request {`"${itemName}"`} saat ini.
+          Kamu bisa mencoba membuat permintaan lain.
         </p>
       </div>
     );
@@ -207,6 +248,19 @@ export default function CheckoutForm({ slug }: { slug: string }) {
       </Field>
 
       <Field label="Foto barang (opsional)" htmlFor="image">
+        {prefillImageUrl && !imageFile ? (
+          <div className="mb-2 flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={prefillImageUrl}
+              alt={itemName || "Barang"}
+              className="h-14 w-14 rounded-lg object-cover"
+            />
+            <span className="text-xs text-zinc-500">
+              Foto dari katalog. Pilih file untuk mengganti.
+            </span>
+          </div>
+        ) : null}
         <input
           id="image"
           type="file"
@@ -244,10 +298,8 @@ export default function CheckoutForm({ slug }: { slug: string }) {
         {uploading
           ? "Mengunggah foto…"
           : phase === "submitting"
-            ? "Membuat pesanan…"
-            : phase === "paying"
-              ? "Membuka pembayaran…"
-              : "Bayar sekarang"}
+            ? "Mengirim permintaan…"
+            : "Kirim permintaan"}
       </Button>
     </form>
   );

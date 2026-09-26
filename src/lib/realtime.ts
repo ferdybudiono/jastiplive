@@ -44,3 +44,43 @@ export async function broadcastOrderEvent(
     // Best effort — the dashboard is the source of truth, not the overlay.
   }
 }
+
+/**
+ * Broadcast an order status change to the buyer's per-order channel.
+ *
+ * The buyer page is anonymous (no SELECT policy on jastip_orders), so it cannot
+ * use postgres_changes. Instead the buyer subscribes to `order:<pay_token>`
+ * with the anon key, and the server pushes a curated, non-PII payload here when
+ * the seller approves or rejects. `pay_token` is unguessable, so it doubles as
+ * the channel's access control.
+ */
+export async function broadcastOrderStatus(
+  payToken: string,
+  status: "approved" | "rejected",
+): Promise<void> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return;
+
+  try {
+    await fetch(`${url}/realtime/v1/api/broadcast`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        messages: [
+          {
+            topic: `order:${payToken}`,
+            event: "status_change",
+            payload: { status },
+          },
+        ],
+      }),
+    });
+  } catch {
+    // Best effort — the buyer also gets a WhatsApp link and the /pay page.
+  }
+}
